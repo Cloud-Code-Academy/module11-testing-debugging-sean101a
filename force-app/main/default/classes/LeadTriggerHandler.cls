@@ -32,21 +32,21 @@ public with sharing class LeadTriggerHandler {
 	 */
 	public static void handleTitleNormalization(List<Lead> leadsToNormalize) {
 		for (Lead ld : leadsToNormalize) {
-			if (ld.title == 'vp' || ld.title.contains('v.p.') || ld.title.contains('vice president')) {
-				ld.Title = 'Vice President';
-			} else if (
-				ld.title.contains('mgr') ||
-				ld.title.contains('manage') ||
-				ld.title.contains('head of department')
-			) {
-				ld.Title = 'Manager';
-			} else if (ld.title.contains('exec') || ld.title == 'chief' || ld.title.contains('head')) {
-				ld.Title = 'Executive';
-			} else if (ld.title.contains('assist') || ld.title.contains('deputy') || ld.title == 'jr') {
-				ld.Title = 'Assistant';
+			// Check if the title is not null before calling any string methods
+			if (ld.Title != null) {
+				if (ld.Title == 'vp' || ld.Title.contains('v.p.') || ld.Title.contains('vice president')) {
+					ld.Title = 'Vice President';
+				} else if (ld.Title.contains('mgr') || ld.Title.contains('manage') || ld.Title.contains('head of department')) {
+					ld.Title = 'Manager';
+				} else if (ld.Title.contains('exec') || ld.Title == 'chief' || ld.Title.contains('head')) {
+					ld.Title = 'Executive';
+				} else if (ld.Title.contains('assist') || ld.Title.contains('deputy') || ld.Title == 'jr') {
+					ld.Title = 'Assistant';
+				}
 			}
 		}
 	}
+	
 
 	/* 
 	 * Question 2
@@ -61,19 +61,19 @@ public with sharing class LeadTriggerHandler {
 	 */
 	public static void handleAutoLeadScoring(List<Lead> leadsToScore) {
 		for (Lead ld : leadsToScore) {
-			Integer score = 10;
+			Integer score = 0; // start with 0 and increment
 
 			// Check and add points based on the specified conditions
 			if (ld.LeadSource == 'Website' && ld.Email != null) {
-				score = 3;
+				score += 3;
 			}
 
 			if (ld.Phone != null) {
-				score = 5;
+				score += 5;
 			}
 
 			if (ld.Industry == 'Technology') {
-				score = 10;
+				score += 10;
 			}
 
 			ld.Lead_Score__c = score; // Set the computed score back to the lead
@@ -104,12 +104,15 @@ public with sharing class LeadTriggerHandler {
 	 * - One of the errors is map related. Make sure you are using the correct contact map key
 	 */
 	public static void handleLeadAutoConvert(List<Lead> leads) {
-		// Step 1: Gather all lead emails
-        Map<Id,String> leadToEmailMap = new Map<Id,String>();
+		// Step 1: Gather all lead emails for non-converted leads
+		Map<Id, String> leadToEmailMap = new Map<Id, String>();
 		for (Lead lead : leads) {
-			leadToEmailMap.put(lead.Id, lead.Email);
+			// Check if the lead is already converted or if the email is null
+			if (!lead.IsConverted && lead.Email != null) {
+				leadToEmailMap.put(lead.Id, lead.Email);
+			}
 		}
-
+	
 		// Step 2: Find matching contacts based on email
 		Map<String, Contact> emailToContactMap = new Map<String, Contact>();
 		for (Contact c : [SELECT Id, Email, AccountId FROM Contact WHERE Email IN :leadToEmailMap.values()]) {
@@ -121,25 +124,32 @@ public with sharing class LeadTriggerHandler {
 				emailToContactMap.remove(c.Email);
 			}
 		}
-
+	
 		// Step 3: Auto-convert leads
 		List<Database.LeadConvert> leadConverts = new List<Database.LeadConvert>();
 		LeadStatus convertStatus = [SELECT Id, MasterLabel FROM LeadStatus WHERE IsConverted = TRUE LIMIT 1];
+	
 		for (Id leadId : leadToEmailMap.keySet()) {
-            String leadEmail = leadToEmailMap.get(leadId);
+			String leadEmail = leadToEmailMap.get(leadId);
 			if (emailToContactMap.containsKey(leadEmail)) {
-				Database.LeadConvert lc = new Database.LeadConvert();
-				lc.setLeadId(leadId);
-				lc.setContactId(emailToContactMap.get(leadEmail).Id); // Use existing Contact Id
-				lc.setAccountId(emailToContactMap.get(leadEmail).AccountId); // Use existing Account Id
-				lc.setDoNotCreateOpportunity(true); // Assuming we don't want to create an opportunity
-				lc.setConvertedStatus(convertStatus.MasterLabel); // Set the converted status
-				leadConverts.add(lc);
+				Contact matchingContact = emailToContactMap.get(leadEmail);
+	
+				// Make sure to skip already converted leads
+				Lead leadToConvert = [SELECT Id, IsConverted FROM Lead WHERE Id = :leadId LIMIT 1];
+				if (!leadToConvert.IsConverted && matchingContact.AccountId != null) { // Ensure AccountId is available
+					Database.LeadConvert lc = new Database.LeadConvert();
+					lc.setLeadId(leadId);
+					lc.setContactId(matchingContact.Id); // Use existing Contact Id
+					lc.setAccountId(matchingContact.AccountId); // Use existing Account Id
+					lc.setDoNotCreateOpportunity(true); // Assuming we don't want to create an opportunity
+					lc.setConvertedStatus(convertStatus.MasterLabel); // Set the converted status
+					leadConverts.add(lc);
+				}
 			}
 		}
-
+	
 		if (!leadConverts.isEmpty()) {
 			List<Database.LeadConvertResult> lcrs = Database.convertLead(leadConverts);
 		}
-	}
-}
+	}	
+}	
